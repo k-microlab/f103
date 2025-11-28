@@ -4,45 +4,55 @@
 use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
+use embassy_stm32::{bind_interrupts, Config};
+use embassy_stm32::dma::NoDma;
 use embassy_stm32::gpio::{Input, Level, Output, OutputType, Pull, Speed};
+use embassy_stm32::mode::Async;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::timer::Channel;
 use embassy_stm32::timer::low_level::CountingMode;
 use embassy_stm32::timer::simple_pwm::{PwmPin, SimplePwm};
+use embassy_stm32::peripherals;
+use embassy_stm32::usart;
+use embassy_stm32::usart::{Config as UartConfig, UartTx};
 use embassy_time::Timer;
-use embedded_hal::Pwm;
 use panic_probe as _;
-use ssd1306::prelude::*;
 
-use manchester_code::{ActivityLevel, SyncOnTurningEdge, BitOrder, Decoder, Encoder, InfraredEmitter, Datagram, DatagramBigEndianIterator};
+/*bind_interrupts!(struct Irqs {
+    USART1 => usart::InterruptHandler<peripherals::USART1>;
+});*/
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    let p = embassy_stm32::init(Default::default());
+    let mut config = Config::default();
+    {
+        use embassy_stm32::rcc::*;
+        config.rcc.hse = Some(Hse {
+            freq: Hertz(8_000_000),
+            // Oscillator for bluepill, Bypass for nucleos.
+            mode: HseMode::Oscillator,
+        });
+        config.rcc.pll = Some(Pll {
+            src: PllSource::HSE,
+            prediv: PllPreDiv::DIV1,
+            mul: PllMul::MUL9,
+        });
+        config.rcc.sys = Sysclk::PLL1_P;
+        config.rcc.ahb_pre = AHBPrescaler::DIV1;
+        config.rcc.apb1_pre = APBPrescaler::DIV2;
+        config.rcc.apb2_pre = APBPrescaler::DIV1;
+    }
+    let p = embassy_stm32::init(config);
 
-    // let mut led = Output::new(p.PC13, Level::High, Speed::Low);
-    let pwm_pin = PwmPin::new_ch1(p.PA8, OutputType::PushPull);
-    let mut pwm = SimplePwm::new(p.TIM1, Some(pwm_pin), None, None, None, Hertz::khz(36), CountingMode::default());
-    pwm.set_duty(Channel::Ch1, pwm.get_max_duty() / 4);
-    const PAUSE_US: u64 = 889;
+    let mut config = UartConfig::default();
+    config.baudrate = 9600;
+    let mut uart = UartTx::new(p.USART1, p.PA9, p.DMA1_CH4, config).unwrap();
 
-    Timer::after_micros(PAUSE_US).await;
-
-    const PAUSE_HALF_BITS_BETWEEN_DATAGRAMS: u8 = 3;
-
-    let mut infrared_emitter = InfraredEmitter::<_, _, DatagramBigEndianIterator>::new(PAUSE_HALF_BITS_BETWEEN_DATAGRAMS, pwm, Channel::Ch1);
-
-    defmt::println!("Init done");
-
-    let datagram = Datagram::new("0101_0011_0111_0001");
+    info!("uart init");
 
     loop {
-        defmt::println!("Send new datagram {}", datagram);
-        infrared_emitter.send_if_possible(datagram, 25);
-
-        for _ in 0..32 {
-            infrared_emitter.send_half_bit();
-            Timer::after_micros(PAUSE_US).await;
-        }
+        info!("Sending message");
+        uart.write(b"Hello, world!\r\n").await.unwrap();
+        Timer::after_secs(10).await;
     }
 }
