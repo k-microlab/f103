@@ -20,10 +20,6 @@ use embassy_time::Timer;
 use embedded_hal::prelude::_embedded_hal_blocking_spi_Write;
 use panic_probe as _;
 
-bind_interrupts!(struct Irqs {
-    USART1 => usart::InterruptHandler<peripherals::USART1>;
-});
-
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let mut config = Config::default();
@@ -49,23 +45,14 @@ async fn main(_spawner: Spawner) {
 
     let mut config = UartConfig::default();
     config.baudrate = 1200;
-    let mut rx = UartRx::new(p.USART1, Irqs, p.PA10, p.DMA1_CH5, config).unwrap();
+    let mut tx = UartTx::new(p.USART1, p.PA9, p.DMA1_CH4, config).unwrap();
 
     info!("uart init");
 
-    let mut buffer = Buffer::<255>::new();
-
     loop {
-        if let Ok(Some(packet)) = buffer.read_packet(&mut rx, &mut crc).await {
-            match core::str::from_utf8(packet.data) {
-                Ok(s) => {
-                    info!("Packet: \"{}\"", s);
-                }
-                Err(e) => {
-                    info!("Packet: <Invalid UTF-8 string>");
-                }
-            }
-        }
+        info!("sending message");
+        write_packet(&mut tx, b"Hello, world!\r\n", &mut crc).await.unwrap();
+        Timer::after_secs(5).await;
     }
 }
 
