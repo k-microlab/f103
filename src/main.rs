@@ -4,52 +4,45 @@
 use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
+use embassy_stm32::gpio::{Input, Level, Output, OutputType, Pull, Speed};
 use embassy_stm32::time::Hertz;
-use embassy_stm32::{bind_interrupts, i2c, peripherals};
-use embassy_stm32::gpio::{Level, Output, Speed};
+use embassy_stm32::timer::Channel;
+use embassy_stm32::timer::low_level::CountingMode;
+use embassy_stm32::timer::simple_pwm::{PwmPin, SimplePwm};
 use embassy_time::Timer;
+use embedded_hal::Pwm;
 use panic_probe as _;
-use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+use ssd1306::prelude::*;
+
+use manchester_code::{ActivityLevel, SyncOnTurningEdge, BitOrder, Decoder, Encoder, InfraredEmitter, Datagram, DatagramBigEndianIterator};
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
 
-    bind_interrupts!(struct Irqs {
-        I2C1_EV => i2c::EventInterruptHandler<peripherals::I2C1>;
-        I2C1_ER => i2c::ErrorInterruptHandler<peripherals::I2C1>;
-    });
+    // let mut led = Output::new(p.PC13, Level::High, Speed::Low);
+    let pwm_pin = PwmPin::new_ch1(p.PA8, OutputType::PushPull);
+    let mut pwm = SimplePwm::new(p.TIM1, Some(pwm_pin), None, None, None, Hertz::khz(36), CountingMode::default());
+    pwm.set_duty(Channel::Ch1, pwm.get_max_duty() / 4);
+    const PAUSE_US: u64 = 889;
 
-    let i2c = embassy_stm32::i2c::I2c::new(
-        p.I2C1,
-        p.PB6,
-        p.PB7,
-        Irqs,
-        p.DMA1_CH6,
-        p.DMA1_CH7,
-        Hertz::khz(400),
-        Default::default(),
-    );
+    Timer::after_micros(PAUSE_US).await;
 
-    let interface = I2CDisplayInterface::new(i2c);
-    let mut display =
-        Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate0).into_terminal_mode();
-    display.init().unwrap();
-    let _ = display.clear();
-    let _ = display.print_char('H');
-    let _ = display.print_char('e');
-    let _ = display.print_char('l');
-    let _ = display.print_char('l');
-    let _ = display.print_char('o');
+    const PAUSE_HALF_BITS_BETWEEN_DATAGRAMS: u8 = 3;
 
-    let mut led = Output::new(p.PC13, Level::High, Speed::Low);
-    
-    // let _ = display.write_fmt(format_args!("{}", 10));
+    let mut infrared_emitter = InfraredEmitter::<_, _, DatagramBigEndianIterator>::new(PAUSE_HALF_BITS_BETWEEN_DATAGRAMS, pwm, Channel::Ch1);
+
+    defmt::println!("Init done");
+
+    let datagram = Datagram::new("0101_0011_0111_0001");
+
     loop {
-        led.set_high();
-        Timer::after_millis(30).await;
+        defmt::println!("Send new datagram {}", datagram);
+        infrared_emitter.send_if_possible(datagram, 25);
 
-        led.set_low();
-        Timer::after_millis(30).await;
+        for _ in 0..32 {
+            infrared_emitter.send_half_bit();
+            Timer::after_micros(PAUSE_US).await;
+        }
     }
 }
