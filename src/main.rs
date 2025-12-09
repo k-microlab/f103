@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 
-use cortex_m_rt::entry;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_stm32::exti::ExtiInput;
@@ -32,12 +31,14 @@ async fn button_task(mut button: ExtiInput<'static>) {
     loop {
         button.wait_for_falling_edge().await;
 
-        unsafe {
-            SELECTED_PROGRAM = (SELECTED_PROGRAM + 1) % NUM_PROGRAMS;
-        }
-
         // Debounce
-        Timer::after(Duration::from_millis(200)).await;
+        Timer::after(Duration::from_millis(50)).await;
+
+        if button.is_low() {
+            unsafe {
+                SELECTED_PROGRAM = (SELECTED_PROGRAM + 1) % NUM_PROGRAMS;
+            }
+        }
     }
 }
 
