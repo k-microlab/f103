@@ -1,55 +1,70 @@
 #![no_std]
 #![no_main]
 
-use defmt::info;
+use cortex_m_rt::entry;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_stm32::time::Hertz;
-use embassy_stm32::{bind_interrupts, i2c, peripherals};
-use embassy_stm32::gpio::{Level, Output, Speed};
-use embassy_time::Timer;
+use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::gpio::{Level, Output, Pull, Speed};
+use embassy_time::{Duration, Timer};
+use embedded_hal::digital::v2::{OutputPin, PinState};
 use panic_probe as _;
-use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+
+const NUM_ELECTRODES: usize = 4;
+const NUM_PROGRAMS: usize = 1;
+
+const H: bool = true;
+const L: bool = false;
+
+static DELAY: u64 = 47;
+
+static PROGRAMS: [&[[bool; NUM_ELECTRODES]]; NUM_PROGRAMS] = [
+    &[
+        [H, L, H, L],
+        [L, H, L, H],
+    ],
+];
+
+static mut SELECTED_PROGRAM: usize = 0;
+
+#[embassy_executor::task]
+async fn button_task(mut button: ExtiInput<'static>) {
+    loop {
+        button.wait_for_falling_edge().await;
+
+        unsafe {
+            SELECTED_PROGRAM = (SELECTED_PROGRAM + 1) % NUM_PROGRAMS;
+        }
+
+        // Debounce
+        Timer::after(Duration::from_millis(200)).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn stimulator_task(mut electrodes: [Output<'static>; NUM_ELECTRODES]) {
+    loop {
+        let program = unsafe { PROGRAMS[SELECTED_PROGRAM] };
+        for stage in program.iter() {
+            for (el, st) in electrodes.iter_mut().zip(stage.iter()) {
+                el.set_state(if *st { PinState::High } else { PinState::Low }).unwrap();
+            }
+            Timer::after(Duration::from_millis(DELAY)).await;
+        }
+    }
+}
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
 
-    bind_interrupts!(struct Irqs {
-        I2C1_EV => i2c::EventInterruptHandler<peripherals::I2C1>;
-        I2C1_ER => i2c::ErrorInterruptHandler<peripherals::I2C1>;
-    });
+    let button = ExtiInput::new(p.PA1, p.EXTI1, Pull::Up);
 
-    let i2c = embassy_stm32::i2c::I2c::new(
-        p.I2C1,
-        p.PB6,
-        p.PB7,
-        Irqs,
-        p.DMA1_CH6,
-        p.DMA1_CH7,
-        Hertz::khz(400),
-        Default::default(),
-    );
+    let el1 = Output::new(p.PB12, Level::High, Speed::Medium);
+    let el2 = Output::new(p.PB13, Level::High, Speed::Medium);
+    let el3 = Output::new(p.PB15, Level::High, Speed::Medium);
+    let el4 = Output::new(p.PA8, Level::High, Speed::Medium);
 
-    let interface = I2CDisplayInterface::new(i2c);
-    let mut display =
-        Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate0).into_terminal_mode();
-    display.init().unwrap();
-    let _ = display.clear();
-    let _ = display.print_char('H');
-    let _ = display.print_char('e');
-    let _ = display.print_char('l');
-    let _ = display.print_char('l');
-    let _ = display.print_char('o');
-
-    let mut led = Output::new(p.PC13, Level::High, Speed::Low);
-    
-    // let _ = display.write_fmt(format_args!("{}", 10));
-    loop {
-        led.set_high();
-        Timer::after_millis(30).await;
-
-        led.set_low();
-        Timer::after_millis(30).await;
-    }
+    spawner.spawn(button_task(button)).unwrap();
+    spawner.spawn(stimulator_task([el1, el2, el3, el4])).unwrap();
 }
