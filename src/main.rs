@@ -162,8 +162,10 @@ async fn main(spawner: Spawner) {
 }
 
 unsafe fn poll_non_sleeping(spawner: Spawner) -> ! {
+    use embassy_executor::raw::Executor;
+
     let executor = unsafe {
-        &mut *(spawner.executor_id() as *const embassy_executor::raw::Executor as *mut embassy_executor::raw::Executor)
+        &mut *(spawner.executor_id() as *const Executor as *mut Executor)
     };
 
     loop {
