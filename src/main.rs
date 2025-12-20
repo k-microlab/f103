@@ -5,16 +5,15 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 use embassy_executor::Spawner;
-use embassy_stm32::{Config, Peri};
-use embassy_stm32::spi::{Config as SpiConfig, Instance, MosiPin, TxDma, MODE_1};
+use embassy_stm32::Config;
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Level, Output, Pull, Speed};
-use embassy_stm32::mode::Async;
-use embassy_stm32::spi::Spi;
 use embassy_stm32::time::Hertz;
 use embassy_time::Timer;
-use smart_leds::{gamma, SmartLedsWrite, RGB8};
-use ws2812_spi::Ws2812;
+use smart_leds::RGB8;
+
+mod led;
+use crate::led::Led;
 
 const NUM_ELECTRODES: usize = 2;
 const NUM_PROGRAMS: usize = 1;
@@ -52,31 +51,7 @@ async fn button_task(mut button: ExtiInput<'static>) {
     }
 }
 
-struct Led<'d, const N: usize> {
-    inner: Ws2812<Spi<'d, Async>>
-}
 
-impl<'d, const N: usize> Led<'d, N> {
-    fn new_spi<T: Instance>(
-        peri: Peri<'d, T>,
-        mosi: Peri<'d, impl MosiPin<T>>,
-        tx_dma: Peri<'d, impl TxDma<T>>,
-    ) -> Self {
-        let mut config = SpiConfig::default();
-        config.frequency = Hertz(2_000_000);
-        config.mode = MODE_1;
-        let spi = Spi::new_txonly_nosck(peri, mosi, tx_dma, config);
-        let inner = Ws2812::new(spi);
-
-        Self {
-            inner
-        }
-    }
-
-    fn write(&mut self, colors: [RGB8; N]) {
-        self.inner.write(gamma(colors.into_iter())).unwrap();
-    }
-}
 
 async fn discrete_colors(led: &mut Led<'static, 1>) {
     let colors = [
@@ -181,7 +156,7 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(button_task(button)).unwrap();
     spawner.spawn(led_task(led)).unwrap();
-    // spawner.spawn(stimulator_task([el1, el2/*, el3, el4*/])).unwrap();
+    spawner.spawn(stimulator_task([el1, el2/*, el3, el4*/])).unwrap();
 
     unsafe { poll_non_sleeping(spawner) }
 }
