@@ -183,6 +183,10 @@ async fn main(spawner: Spawner) {
     spawner.spawn(led_task(led)).unwrap();
     // spawner.spawn(stimulator_task([el1, el2/*, el3, el4*/])).unwrap();
 
+    unsafe { poll_non_sleeping(spawner) }
+}
+
+unsafe fn poll_non_sleeping(spawner: Spawner) -> ! {
     let executor = unsafe {
         &mut *(spawner.executor_id() as *const embassy_executor::raw::Executor as *mut embassy_executor::raw::Executor)
     };
