@@ -51,8 +51,6 @@ async fn button_task(mut button: ExtiInput<'static>) {
     }
 }
 
-
-
 async fn discrete_colors(led: &mut Led<'static, 1>) {
     let colors = [
         RGB8::new(255, 0, 0),
@@ -77,15 +75,17 @@ async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8) {
             led.write([color]);
             Timer::after_millis(5).await;
         }
-    } else {
+        *inc = false;
+    }
+    if !*inc {
         while *value > 0 {
             *value -= 1;
             let color = RGB8::new(*value, 0, 0);
             led.write([color]);
             Timer::after_millis(5).await;
         }
+        *inc = true;
     }
-    *inc = !*inc;
 }
 
 #[embassy_executor::task]
