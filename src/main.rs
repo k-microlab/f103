@@ -94,7 +94,7 @@ async fn fading(led: &mut Ws2812<Spi<'static, Async>>) {
 async fn led_task(mut led: Ws2812<Spi<'static, Async>>) {
     discrete_colors(&mut led).await;
     Timer::after_secs(5).await;
-
+    fading(&mut led).await;
 }
 
 #[embassy_executor::task]
