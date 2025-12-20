@@ -2,16 +2,17 @@
 #![no_main]
 
 use defmt_rtt as _;
+use panic_probe as _;
+
 use embassy_executor::Spawner;
-use embassy_stm32::Config;
-use embassy_stm32::spi::{Config as SpiConfig, MODE_0, MODE_1};
+use embassy_stm32::{Config, Peri};
+use embassy_stm32::spi::{Config as SpiConfig, Instance, MosiPin, TxDma, MODE_1};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Level, Output, Pull, Speed};
 use embassy_stm32::mode::Async;
 use embassy_stm32::spi::Spi;
 use embassy_stm32::time::Hertz;
 use embassy_time::Timer;
-use panic_probe as _;
 use smart_leds::{gamma, SmartLedsWrite, RGB8};
 use ws2812_spi::Ws2812;
 
@@ -51,7 +52,33 @@ async fn button_task(mut button: ExtiInput<'static>) {
     }
 }
 
-async fn discrete_colors(led: &mut Ws2812<Spi<'static, Async>>) {
+struct Led<'d, const N: usize> {
+    inner: Ws2812<Spi<'d, Async>>
+}
+
+impl<'d, const N: usize> Led<'d, N> {
+    fn new_spi<T: Instance>(
+        peri: Peri<'d, T>,
+        mosi: Peri<'d, impl MosiPin<T>>,
+        tx_dma: Peri<'d, impl TxDma<T>>,
+    ) -> Self {
+        let mut config = SpiConfig::default();
+        config.frequency = Hertz(2_000_000);
+        config.mode = MODE_1;
+        let spi = Spi::new_txonly_nosck(peri, mosi, tx_dma, config);
+        let inner = Ws2812::new(spi);
+
+        Self {
+            inner
+        }
+    }
+
+    fn write(&mut self, colors: [RGB8; N]) {
+        self.inner.write(gamma(colors.into_iter())).unwrap();
+    }
+}
+
+async fn discrete_colors(led: &mut Led<'static, 1>) {
     let colors = [
         RGB8::new(255, 0, 0),
         RGB8::new(255, 255, 0),
@@ -62,39 +89,37 @@ async fn discrete_colors(led: &mut Ws2812<Spi<'static, Async>>) {
         RGB8::new(0, 0, 0),
     ];
     for color in colors {
-        led.write(gamma([color].into_iter())).unwrap();
+        led.write([color]);
         Timer::after_secs(1).await;
     }
 }
 
-async fn fading(led: &mut Ws2812<Spi<'static, Async>>) {
-    let mut inc = true;
-    let mut v = 0;
-    loop {
-        if inc {
-            while v < 255 {
-                v += 1;
-                let color = RGB8::new(v, 0, 0);
-                led.write(gamma([color].into_iter())).unwrap();
-                Timer::after_millis(5).await;
-            }
-        } else {
-            while v > 0 {
-                v -= 1;
-                let color = RGB8::new(v, 0, 0);
-                led.write(gamma([color].into_iter())).unwrap();
-                Timer::after_millis(5).await;
-            }
+async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8) {
+    if *inc {
+        while *value < 255 {
+            *value += 1;
+            let color = RGB8::new(*value, 0, 0);
+            led.write([color]);
+            Timer::after_millis(5).await;
         }
-        inc = !inc;
+    } else {
+        while *value > 0 {
+            *value -= 1;
+            let color = RGB8::new(*value, 0, 0);
+            led.write([color]);
+            Timer::after_millis(5).await;
+        }
     }
+    *inc = !*inc;
 }
 
 #[embassy_executor::task]
-async fn led_task(mut led: Ws2812<Spi<'static, Async>>) {
+async fn led_task(mut led: Led<'static, 1>) {
     discrete_colors(&mut led).await;
     Timer::after_secs(5).await;
-    fading(&mut led).await;
+    loop {
+        fading(&mut led, &mut true, &mut 0).await;
+    }
 }
 
 #[embassy_executor::task]
@@ -152,12 +177,7 @@ async fn main(spawner: Spawner) {
     // let el3 = Output::new(p.PB14, Level::High, Speed::Medium);
     // let el4 = Output::new(p.PA8, Level::High, Speed::Medium);
 
-    let mut config = SpiConfig::default();
-    config.frequency = Hertz(2_000_000);
-    config.mode = MODE_1;
-    let spi = Spi::new_txonly_nosck(p.SPI2, p.PB15, p.DMA1_CH5, config);
-
-    let led = Ws2812::new(spi);
+    let led = Led::new_spi(p.SPI2, p.PB15, p.DMA1_CH5);
 
     spawner.spawn(button_task(button)).unwrap();
     spawner.spawn(led_task(led)).unwrap();
