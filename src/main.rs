@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use defmt::Format;
 use defmt_rtt as _;
 use panic_probe as _;
 
@@ -15,6 +16,7 @@ use smart_leds::RGB8;
 mod led;
 use crate::led::Led;
 
+const MAX_BRIGHTNESS: u8 = 100;
 const NUM_ELECTRODES: usize = 2;
 const NUM_PROGRAMS: usize = 1;
 
@@ -24,6 +26,18 @@ const L: bool = false;
 
 const MODES: usize = 5;
 static mut MODE: usize = 0;
+static mut CHARGING: bool = false;
+static mut STANDBY: bool = true;
+
+static mut STATE: ChargingState = ChargingState::Unknown;
+
+#[derive(Debug, Format, Copy, Clone, PartialEq, Eq)]
+enum ChargingState {
+    InProgress,
+    Finished,
+    BatteryProblem,
+    Unknown,
+}
 
 static PROGRAMS: [&[[bool; NUM_ELECTRODES]]; NUM_PROGRAMS] = [
     &[
@@ -51,14 +65,74 @@ async fn button_task(mut button: ExtiInput<'static>) {
     }
 }
 
+fn set_state(charging: bool, standby: bool) {
+    let state = match (charging, standby) {
+        (true, false) => ChargingState::InProgress,
+        (false, true) => ChargingState::Finished,
+        (false, false) => ChargingState::BatteryProblem,
+        _ => ChargingState::Unknown,
+    };
+    unsafe { STATE = state };
+}
+
+fn set_charging(pin: &ExtiInput<'static>) {
+    let low = pin.is_low();
+    unsafe {
+        if CHARGING != low {
+            CHARGING = low;
+            set_state(CHARGING, STANDBY);
+            defmt::info!("State = {:?}", STATE);
+        }
+    }
+}
+
+#[embassy_executor::task]
+async fn charge_task(mut pin: ExtiInput<'static>) {
+    Timer::after_millis(200).await;
+    set_charging(&pin);
+
+    loop {
+        pin.wait_for_any_edge().await;
+
+        // Debounce
+        Timer::after_millis(50).await;
+        set_charging(&pin);
+    }
+}
+
+fn set_standby(pin: &ExtiInput<'static>) {
+    let low = pin.is_low();
+    unsafe {
+        if STANDBY != low {
+            STANDBY = low;
+            set_state(CHARGING, STANDBY);
+            defmt::info!("State = {:?}", STATE);
+        }
+    }
+}
+
+#[embassy_executor::task]
+async fn standby_task(mut pin: ExtiInput<'static>) {
+    Timer::after_millis(200).await;
+    set_standby(&pin);
+
+    loop {
+        pin.wait_for_any_edge().await;
+
+        // Debounce
+        Timer::after_millis(50).await;
+        set_standby(&pin);
+    }
+}
+
 async fn discrete_colors(led: &mut Led<'static, 1>) {
     let colors = [
-        RGB8::new(255, 0, 0),
-        RGB8::new(255, 255, 0),
-        RGB8::new(0, 255, 0),
-        RGB8::new(0, 255, 255),
-        RGB8::new(0, 0, 255),
-        RGB8::new(255, 0, 255),
+        RGB8::new(MAX_BRIGHTNESS, 0, 0),
+        RGB8::new(MAX_BRIGHTNESS, MAX_BRIGHTNESS, 0),
+        RGB8::new(0, MAX_BRIGHTNESS, 0),
+        RGB8::new(0, MAX_BRIGHTNESS, MAX_BRIGHTNESS),
+        RGB8::new(0, 0, MAX_BRIGHTNESS),
+        RGB8::new(MAX_BRIGHTNESS, 0, MAX_BRIGHTNESS),
         RGB8::new(0, 0, 0),
     ];
     for color in colors {
@@ -67,22 +141,20 @@ async fn discrete_colors(led: &mut Led<'static, 1>) {
     }
 }
 
-async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8) {
+async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8, color: impl Fn(u8) -> RGB8) {
     if *inc {
-        while *value < 255 {
+        while *value < MAX_BRIGHTNESS {
             *value += 1;
-            let color = RGB8::new(*value, 0, 0);
-            led.write([color]);
-            Timer::after_millis(5).await;
+            led.write([color(*value)]);
+            Timer::after_millis(10).await;
         }
         *inc = false;
     }
     if !*inc {
         while *value > 0 {
             *value -= 1;
-            let color = RGB8::new(*value, 0, 0);
-            led.write([color]);
-            Timer::after_millis(5).await;
+            led.write([color(*value)]);
+            Timer::after_millis(10).await;
         }
         *inc = true;
     }
@@ -90,10 +162,17 @@ async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8) {
 
 #[embassy_executor::task]
 async fn led_task(mut led: Led<'static, 1>) {
-    discrete_colors(&mut led).await;
+    led.write([RGB8::new(0, 0, 0)]);
+    //discrete_colors(&mut led).await;
     Timer::after_secs(5).await;
     loop {
-        fading(&mut led, &mut true, &mut 0).await;
+        unsafe {
+            if STATE == ChargingState::InProgress {
+                fading(&mut led, &mut true, &mut 0, |v| RGB8::new(v, 0, 0)).await;
+            } else {
+                led.write([RGB8::new(0, 0, 0)]);
+            }
+        }
     }
 }
 
@@ -122,17 +201,13 @@ async fn main(spawner: Spawner) {
         // Import RCC configuration items to avoid long paths
         use embassy_stm32::rcc::*;
 
-        // Enable HSE and set its frequency and mode
-        c.rcc.hse = Some(Hse {
-            freq: Hertz(8_000_000), // Specify your crystal frequency
-            mode: HseMode::Oscillator, // Use HseMode::Bypass if using an external clock source
-        });
+        c.rcc.hsi = true;
 
         // Configure the main PLL (PLL1 in some families)
         c.rcc.pll = Some(Pll {
-            src: PllSource::HSE,
-            prediv: PllPreDiv::DIV1,     // 8 MHz / 1 = 8 MHz
-            mul: PllMul::MUL9,         // 8 MHz * 9 = 72 MHz (VCO)
+            src: PllSource::HSI,
+            prediv: PllPreDiv::DIV2,     // 8 MHz / 2 = 4 MHz
+            mul: PllMul::MUL4,         // 4 MHz * 4 = 16 MHz (VCO)
         });
 
         // Set the System Clock source to the PLL output (PLL1_P)
@@ -140,7 +215,7 @@ async fn main(spawner: Spawner) {
 
         // Configure prescalers for AHB and APB buses
         c.rcc.ahb_pre = AHBPrescaler::DIV1;
-        c.rcc.apb1_pre = APBPrescaler::DIV2;
+        c.rcc.apb1_pre = APBPrescaler::DIV1;
         c.rcc.apb2_pre = APBPrescaler::DIV1;
     }
     let p = embassy_stm32::init(c);
@@ -152,9 +227,14 @@ async fn main(spawner: Spawner) {
     // let el3 = Output::new(p.PB14, Level::High, Speed::Medium);
     // let el4 = Output::new(p.PA8, Level::High, Speed::Medium);
 
+    let charge = ExtiInput::new(p.PB3, p.EXTI3, Pull::Up);
+    let standby = ExtiInput::new(p.PB4, p.EXTI4, Pull::Up);
+
     let led = Led::new_spi(p.SPI2, p.PB15, p.DMA1_CH5);
 
     spawner.spawn(button_task(button)).unwrap();
+    spawner.spawn(standby_task(standby)).unwrap();
+    spawner.spawn(charge_task(charge)).unwrap();
     spawner.spawn(led_task(led)).unwrap();
     spawner.spawn(stimulator_task([el1, el2/*, el3, el4*/])).unwrap();
 

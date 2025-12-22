@@ -16,7 +16,7 @@ impl<'d, const N: usize> Led<'d, N> {
         tx_dma: Peri<'d, impl TxDma<T>>,
     ) -> Self {
         let mut config = SpiConfig::default();
-        config.frequency = Hertz(2_000_000);
+        config.frequency = Hertz(4_000_000);
         config.mode = MODE_1;
         let spi = Spi::new_txonly_nosck(peri, mosi, tx_dma, config);
         let inner = Ws2812::new(spi);
