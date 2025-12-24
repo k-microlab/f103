@@ -142,11 +142,12 @@ async fn discrete_colors(led: &mut Led<'static, 1>) {
 }
 
 async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8, color: impl Fn(u8) -> RGB8) {
+    let mc = 2 * 1000_000 / (2 * MAX_BRIGHTNESS as u64);
     if *inc {
         while *value < MAX_BRIGHTNESS {
             *value += 1;
             led.write([color(*value)]);
-            Timer::after_millis(10).await;
+            Timer::after_micros(mc).await;
         }
         *inc = false;
     }
@@ -154,7 +155,7 @@ async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8, color
         while *value > 0 {
             *value -= 1;
             led.write([color(*value)]);
-            Timer::after_millis(10).await;
+            Timer::after_micros(mc).await;
         }
         *inc = true;
     }
