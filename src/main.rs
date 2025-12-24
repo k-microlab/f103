@@ -8,9 +8,9 @@ use panic_probe as _;
 use embassy_executor::Spawner;
 use embassy_stm32::Config;
 use embassy_stm32::exti::ExtiInput;
-use embassy_stm32::gpio::{Level, Output, Pull, Speed};
+use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::time::Hertz;
-use embassy_time::{Instant, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use smart_leds::RGB8;
 
 mod led;
@@ -50,6 +50,7 @@ static mut SELECTED_PROGRAM: usize = 0;
 
 #[embassy_executor::task]
 async fn button_task(mut button: ExtiInput<'static>) {
+    defmt::info!("Button task");
     loop {
         button.wait_for_falling_edge().await;
 
@@ -72,10 +73,16 @@ async fn button_task(mut button: ExtiInput<'static>) {
         Timer::after_millis(50).await;
 
         if button.is_high() {
-            defmt::info!("Button unpressed: {}", start.elapsed());
+            let elapsed = start.elapsed();
+            defmt::info!("Button unpressed: {}", elapsed);
             unsafe {
-                MODE = (MODE + 1) % MODES;
-                defmt::info!("Mode: {}", MODE);
+                if elapsed > Duration::from_secs(2) {
+                    MODE = 0;
+                    defmt::info!("Shutdown");
+                } else {
+                    MODE = (MODE + 1) % MODES;
+                    defmt::info!("Mode: {}", MODE);
+                }
             }
         }
     }
@@ -105,6 +112,7 @@ fn set_charging(pin: &ExtiInput<'static>) {
 #[embassy_executor::task]
 async fn charge_task(mut pin: ExtiInput<'static>) {
     Timer::after_millis(200).await;
+    defmt::info!("Charge task");
     set_charging(&pin);
 
     loop {
@@ -130,6 +138,7 @@ fn set_standby(pin: &ExtiInput<'static>) {
 #[embassy_executor::task]
 async fn standby_task(mut pin: ExtiInput<'static>) {
     Timer::after_millis(200).await;
+    defmt::info!("Standby task");
     set_standby(&pin);
 
     loop {
@@ -179,29 +188,36 @@ async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8, color
 
 #[embassy_executor::task]
 async fn led_task(mut led: Led<'static, 1>) {
+    defmt::info!("LED task");
     led.write([RGB8::new(0, 0, 0)]);
     //discrete_colors(&mut led).await;
     // Timer::after_secs(5).await;
+    let mut off = true;
     loop {
         unsafe {
             match MODE {
-                0 => {
+                1 => {
+                    off = false;
                     fading(&mut led, &mut true, &mut 0, |v| RGB8::new(v, 0, 0)).await;
                 }
-                1 => {
+                2 => {
+                    off = false;
                     fading(&mut led, &mut true, &mut 0, |v| RGB8::new(0, v, 0)).await;
                 }
-                2 => {
+                3 => {
+                    off = false;
                     fading(&mut led, &mut true, &mut 0, |v| RGB8::new(0, 0, v)).await;
                 }
-                3 => {
-                    fading(&mut led, &mut true, &mut 0, |v| RGB8::new(v, 0, v)).await;
-                }
                 4 => {
+                    off = false;
                     fading(&mut led, &mut true, &mut 0, |v| RGB8::new(0, v, v)).await;
                 }
                 _ => {
-                    led.write([RGB8::new(0, 0, 0)]);
+                    if !off {
+                        led.write([RGB8::new(0, 0, 0)]);
+                        off = true;
+                    }
+                    Timer::after_millis(200).await;
                 }
             }
         }
@@ -210,24 +226,30 @@ async fn led_task(mut led: Led<'static, 1>) {
 
 #[embassy_executor::task]
 async fn stimulator_task(mut electrodes: [Output<'static>; NUM_ELECTRODES]) {
+    defmt::info!("Stimulator task");
     loop {
-        let program = unsafe { PROGRAMS[SELECTED_PROGRAM] };
-        for stage in program.iter() {
-            for (el, st) in electrodes.iter_mut().zip(stage.iter()) {
-                if *st {
-                    el.set_low();
-                } else {
-                    el.set_high();
+        if unsafe { MODE } > 0 {
+            let program = unsafe { PROGRAMS[SELECTED_PROGRAM] };
+            for stage in program.iter() {
+                for (el, st) in electrodes.iter_mut().zip(stage.iter()) {
+                    if *st {
+                        el.set_low();
+                    } else {
+                        el.set_high();
+                    }
                 }
+                let delay = unsafe { MODE * 10 } as u64;
+                Timer::after_millis(delay).await;
             }
-            let delay = unsafe { (MODE + 1) * 5 } as u64;
-            Timer::after_millis(delay).await;
+        } else {
+            Timer::after_millis(1).await;
         }
     }
 }
 
 #[embassy_executor::task]
 async fn buzzer_task(mut pin: Output<'static>) {
+    defmt::info!("Buzzer task");
     loop {
         pin.set_low();
     }
@@ -258,19 +280,25 @@ async fn main(spawner: Spawner) {
         c.rcc.apb2_pre = APBPrescaler::DIV1;
     }
     let p = embassy_stm32::init(c);
+    defmt::info!("Init done");
 
     let button = ExtiInput::new(p.PA1, p.EXTI1, Pull::Up);
 
     let el1 = Output::new(p.PA2, Level::High, Speed::Medium);
     let el2 = Output::new(p.PA3, Level::High, Speed::Medium);
+    // let s1 = Output::new(p.PB8, Level::High, Speed::Medium);
+    // let s6 = Output::new(p.PB7, Level::High, Speed::Medium);
+    // let s3 = Output::new(p.PA6, Level::High, Speed::Medium);
+    // let s10 = Output::new(p.PB1, Level::High, Speed::Medium);
     // let el3 = Output::new(p.PB14, Level::High, Speed::Medium);
     // let el4 = Output::new(p.PA8, Level::High, Speed::Medium);
 
     let charge = ExtiInput::new(p.PB3, p.EXTI3, Pull::Up);
     let standby = ExtiInput::new(p.PB4, p.EXTI4, Pull::Up);
-    let buzzer = Output::new(p.PA8, Level::High, Speed::VeryHigh);
+    let buzzer = Input::new(p.PA8, Pull::None);
 
     let led = Led::new_spi(p.SPI2, p.PB15, p.DMA1_CH5);
+    defmt::info!("LED done");
 
     spawner.spawn(button_task(button)).unwrap();
     spawner.spawn(standby_task(standby)).unwrap();
