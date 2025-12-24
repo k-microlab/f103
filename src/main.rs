@@ -10,7 +10,7 @@ use embassy_stm32::Config;
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Level, Output, Pull, Speed};
 use embassy_stm32::time::Hertz;
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use smart_leds::RGB8;
 
 mod led;
@@ -56,7 +56,23 @@ async fn button_task(mut button: ExtiInput<'static>) {
         // Debounce
         Timer::after_millis(50).await;
 
+        let mut was_pressed = false;
+        let start = Instant::now();
+
         if button.is_low() {
+            was_pressed = true;
+            defmt::info!("Button pressed");
+            unsafe {
+            }
+        }
+
+        button.wait_for_rising_edge().await;
+
+        // Debounce
+        Timer::after_millis(50).await;
+
+        if button.is_high() {
+            defmt::info!("Button unpressed: {}", start.elapsed());
             unsafe {
                 MODE = (MODE + 1) % MODES;
                 defmt::info!("Mode: {}", MODE);
