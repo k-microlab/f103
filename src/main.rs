@@ -226,6 +226,13 @@ async fn stimulator_task(mut electrodes: [Output<'static>; NUM_ELECTRODES]) {
     }
 }
 
+#[embassy_executor::task]
+async fn buzzer_task(mut pin: Output<'static>) {
+    loop {
+        pin.set_low();
+    }
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let mut c = Config::default();
@@ -261,6 +268,7 @@ async fn main(spawner: Spawner) {
 
     let charge = ExtiInput::new(p.PB3, p.EXTI3, Pull::Up);
     let standby = ExtiInput::new(p.PB4, p.EXTI4, Pull::Up);
+    let buzzer = Output::new(p.PA8, Level::High, Speed::VeryHigh);
 
     let led = Led::new_spi(p.SPI2, p.PB15, p.DMA1_CH5);
 
@@ -268,6 +276,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(standby_task(standby)).unwrap();
     spawner.spawn(charge_task(charge)).unwrap();
     spawner.spawn(led_task(led)).unwrap();
+    // spawner.spawn(buzzer_task(buzzer)).unwrap();
     spawner.spawn(stimulator_task([el1, el2/*, el3, el4*/])).unwrap();
 
     unsafe { poll_non_sleeping(spawner) }
