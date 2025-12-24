@@ -181,13 +181,28 @@ async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8, color
 async fn led_task(mut led: Led<'static, 1>) {
     led.write([RGB8::new(0, 0, 0)]);
     //discrete_colors(&mut led).await;
-    Timer::after_secs(5).await;
+    // Timer::after_secs(5).await;
     loop {
         unsafe {
-            if STATE == ChargingState::InProgress {
-                fading(&mut led, &mut true, &mut 0, |v| RGB8::new(v, 0, 0)).await;
-            } else {
-                led.write([RGB8::new(0, 0, 0)]);
+            match MODE {
+                0 => {
+                    fading(&mut led, &mut true, &mut 0, |v| RGB8::new(v, 0, 0)).await;
+                }
+                1 => {
+                    fading(&mut led, &mut true, &mut 0, |v| RGB8::new(0, v, 0)).await;
+                }
+                2 => {
+                    fading(&mut led, &mut true, &mut 0, |v| RGB8::new(0, 0, v)).await;
+                }
+                3 => {
+                    fading(&mut led, &mut true, &mut 0, |v| RGB8::new(v, 0, v)).await;
+                }
+                4 => {
+                    fading(&mut led, &mut true, &mut 0, |v| RGB8::new(0, v, v)).await;
+                }
+                _ => {
+                    led.write([RGB8::new(0, 0, 0)]);
+                }
             }
         }
     }
