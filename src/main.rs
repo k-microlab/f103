@@ -8,8 +8,7 @@ use panic_probe as _;
 use embassy_executor::Spawner;
 use embassy_stm32::Config;
 use embassy_stm32::exti::ExtiInput;
-use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
-use embassy_stm32::time::Hertz;
+use embassy_stm32::gpio::{Flex, Input, Output, Pull, Speed};
 use embassy_time::{Duration, Instant, Timer};
 use smart_leds::RGB8;
 
@@ -17,19 +16,39 @@ mod led;
 use crate::led::Led;
 
 const MAX_BRIGHTNESS: u8 = 100;
-const NUM_ELECTRODES: usize = 2;
+const NUM_ELECTRODES: usize = 6;
 const NUM_PROGRAMS: usize = 1;
 
-const H: bool = true;
-const L: bool = false;
-
-
 const MODES: usize = 5;
-static mut MODE: usize = 0;
+static mut MODE: usize = 4;
 static mut CHARGING: bool = false;
 static mut STANDBY: bool = true;
 
 static mut STATE: ChargingState = ChargingState::Unknown;
+
+enum State {
+    L,
+    H,
+    D,
+}
+
+impl State {
+    fn apply(&self, el: &mut Flex<'static>) {
+        match *self {
+            L => {
+                el.set_as_output(Speed::Medium);
+                el.set_low();
+            },
+            H => {
+                el.set_as_output(Speed::Medium);
+                el.set_high();
+            },
+            D => {
+                el.set_as_input(Pull::None);
+            }
+        }
+    }
+}
 
 #[derive(Debug, Format, Copy, Clone, PartialEq, Eq)]
 enum ChargingState {
@@ -39,10 +58,14 @@ enum ChargingState {
     Unknown,
 }
 
-static PROGRAMS: [&[[bool; NUM_ELECTRODES]]; NUM_PROGRAMS] = [
+use State::*;
+static PROGRAMS: [&[[State; NUM_ELECTRODES]]; NUM_PROGRAMS] = [
     &[
-        [H, L/*, H, L*/],
-        [L, H/*, L, H*/],
+        [H, L, D, D, D, D],
+        [L, H, D, D, D, D],
+
+        [D, D, D, D, H, L],
+        [D, D, D, D, L, H],
     ],
 ];
 
@@ -225,18 +248,14 @@ async fn led_task(mut led: Led<'static, 1>) {
 }
 
 #[embassy_executor::task]
-async fn stimulator_task(mut electrodes: [Output<'static>; NUM_ELECTRODES]) {
+async fn stimulator_task(mut electrodes: [Flex<'static>; NUM_ELECTRODES]) {
     defmt::info!("Stimulator task");
     loop {
         if unsafe { MODE } > 0 {
             let program = unsafe { PROGRAMS[SELECTED_PROGRAM] };
             for stage in program.iter() {
                 for (el, st) in electrodes.iter_mut().zip(stage.iter()) {
-                    if *st {
-                        el.set_low();
-                    } else {
-                        el.set_high();
-                    }
+                    st.apply(el);
                 }
                 let delay = unsafe { MODE * 10 } as u64;
                 Timer::after_millis(delay).await;
@@ -284,14 +303,12 @@ async fn main(spawner: Spawner) {
 
     let button = ExtiInput::new(p.PA1, p.EXTI1, Pull::Up);
 
-    let el1 = Output::new(p.PA2, Level::High, Speed::Medium);
-    let el2 = Output::new(p.PA3, Level::High, Speed::Medium);
-    // let s1 = Output::new(p.PB8, Level::High, Speed::Medium);
-    // let s6 = Output::new(p.PB7, Level::High, Speed::Medium);
-    // let s3 = Output::new(p.PA6, Level::High, Speed::Medium);
-    // let s10 = Output::new(p.PB1, Level::High, Speed::Medium);
-    // let el3 = Output::new(p.PB14, Level::High, Speed::Medium);
-    // let el4 = Output::new(p.PA8, Level::High, Speed::Medium);
+    let el1 = Flex::new(p.PA2);
+    let el2 = Flex::new(p.PA3);
+    let s2 = Flex::new(p.PB9);
+    let s5 = Flex::new(p.PB6);
+    let s4 = Flex::new(p.PA7);
+    let s9 = Flex::new(p.PB0);
 
     let charge = ExtiInput::new(p.PB3, p.EXTI3, Pull::Up);
     let standby = ExtiInput::new(p.PB4, p.EXTI4, Pull::Up);
@@ -305,7 +322,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(charge_task(charge)).unwrap();
     spawner.spawn(led_task(led)).unwrap();
     // spawner.spawn(buzzer_task(buzzer)).unwrap();
-    spawner.spawn(stimulator_task([el1, el2/*, el3, el4*/])).unwrap();
+    spawner.spawn(stimulator_task([s4, s9, el1, el2, s2, s5])).unwrap();
 
     unsafe { poll_non_sleeping(spawner) }
 }
