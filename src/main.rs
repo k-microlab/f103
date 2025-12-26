@@ -20,7 +20,7 @@ const NUM_ELECTRODES: usize = 6;
 const NUM_PROGRAMS: usize = 1;
 
 const MODES: usize = 5;
-static mut MODE: usize = 4;
+static mut MODE: usize = 0;
 static mut CHARGING: bool = false;
 static mut STANDBY: bool = true;
 
