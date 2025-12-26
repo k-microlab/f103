@@ -73,7 +73,6 @@ static mut SELECTED_PROGRAM: usize = 0;
 
 #[embassy_executor::task]
 async fn button_task(mut button: ExtiInput<'static>) {
-    defmt::info!("Button task");
     loop {
         button.wait_for_falling_edge().await;
 
@@ -135,7 +134,6 @@ fn set_charging(pin: &ExtiInput<'static>) {
 #[embassy_executor::task]
 async fn charge_task(mut pin: ExtiInput<'static>) {
     Timer::after_millis(200).await;
-    defmt::info!("Charge task");
     set_charging(&pin);
 
     loop {
@@ -161,7 +159,6 @@ fn set_standby(pin: &ExtiInput<'static>) {
 #[embassy_executor::task]
 async fn standby_task(mut pin: ExtiInput<'static>) {
     Timer::after_millis(200).await;
-    defmt::info!("Standby task");
     set_standby(&pin);
 
     loop {
@@ -211,7 +208,6 @@ async fn fading(led: &mut Led<'static, 1>, inc: &mut bool, value: &mut u8, color
 
 #[embassy_executor::task]
 async fn led_task(mut led: Led<'static, 1>) {
-    defmt::info!("LED task");
     led.write([RGB8::new(0, 0, 0)]);
     //discrete_colors(&mut led).await;
     // Timer::after_secs(5).await;
@@ -249,7 +245,6 @@ async fn led_task(mut led: Led<'static, 1>) {
 
 #[embassy_executor::task]
 async fn stimulator_task(mut electrodes: [Flex<'static>; NUM_ELECTRODES]) {
-    defmt::info!("Stimulator task");
     loop {
         if unsafe { MODE } > 0 {
             let program = unsafe { PROGRAMS[SELECTED_PROGRAM] };
@@ -268,7 +263,6 @@ async fn stimulator_task(mut electrodes: [Flex<'static>; NUM_ELECTRODES]) {
 
 #[embassy_executor::task]
 async fn buzzer_task(mut pin: Output<'static>) {
-    defmt::info!("Buzzer task");
     loop {
         pin.set_low();
     }
@@ -299,7 +293,6 @@ async fn main(spawner: Spawner) {
         c.rcc.apb2_pre = APBPrescaler::DIV1;
     }
     let p = embassy_stm32::init(c);
-    defmt::info!("Init done");
 
     let button = ExtiInput::new(p.PA1, p.EXTI1, Pull::Up);
 
@@ -315,7 +308,6 @@ async fn main(spawner: Spawner) {
     let buzzer = Input::new(p.PA8, Pull::None);
 
     let led = Led::new_spi(p.SPI2, p.PB15, p.DMA1_CH5);
-    defmt::info!("LED done");
 
     spawner.spawn(button_task(button)).unwrap();
     spawner.spawn(standby_task(standby)).unwrap();
