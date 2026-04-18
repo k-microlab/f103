@@ -56,7 +56,7 @@ fn main() -> ! {
 
     defmt::info!("Display size: {:?}x{:?}", w, h);
 
-    // disp.set_draw_area((0, 0), (w, h)).expect("Failed to set draw area");
+    disp.set_draw_area((0, 0), (w, h)).expect("Failed to set draw area");
     // disp.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(w as _, h as _)), Rgb565::GREEN).expect("Failed to fill solid area");
     <_ as DrawTarget>::clear(&mut disp, Rgb565::GREEN).expect("Failed to clear display");
 
