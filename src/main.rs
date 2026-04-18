@@ -42,7 +42,7 @@ fn main() -> ! {
             polarity: Polarity::IdleLow,
             phase: Phase::CaptureOnFirstTransition,
         },
-        4.MHz(),
+        1.MHz(),
         clocks
     );
 
