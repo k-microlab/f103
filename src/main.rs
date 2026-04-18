@@ -6,6 +6,7 @@ use defmt_rtt as _;
 
 use cortex_m_rt::{entry, exception, ExceptionFrame};
 use embedded_graphics::{geometry::Point, image::Image, pixelcolor::Rgb565, prelude::*};
+use embedded_graphics::primitives::Rectangle;
 use ssd1331::{DisplayRotation, Ssd1331};
 use stm32f1xx_hal::{
     prelude::*,
@@ -54,6 +55,9 @@ fn main() -> ! {
     let (w, h) = disp.dimensions();
 
     defmt::info!("Display size: {:?}x{:?}", w, h);
+
+    disp.set_draw_area((0, 0), (w, h)).expect("Failed to set draw area");
+    disp.fill_solid(&Rectangle::new(Point::new(0, 0), Size::new(w as _, h as _)), Rgb565::GREEN).expect("Failed to fill solid area");
 
     /*let bmp =
         Bmp::from_slice(include_bytes!("./image.bmp")).expect("Failed to load BMP image");
