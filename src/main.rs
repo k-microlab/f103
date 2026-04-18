@@ -50,7 +50,6 @@ fn main() -> ! {
 
     disp.reset(&mut rst, &mut delay).unwrap();
     disp.init().unwrap();
-    disp.flush().unwrap();
 
     let (w, h) = disp.dimensions();
 
