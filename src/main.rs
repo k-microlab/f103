@@ -42,7 +42,7 @@ fn main() -> ! {
             polarity: Polarity::IdleLow,
             phase: Phase::CaptureOnFirstTransition,
         },
-        8.mhz(),
+        8.MHz(),
         clocks
     );
 
@@ -54,8 +54,10 @@ fn main() -> ! {
 
     let (w, h) = disp.dimensions();
 
-    let bmp =
-        Bmp::from_slice(include_bytes!("./rust-pride.bmp")).expect("Failed to load BMP image");
+    defmt::info!("Display size: {:?}x{:?}", w, h);
+
+    /*let bmp =
+        Bmp::from_slice(include_bytes!("./image.bmp")).expect("Failed to load BMP image");
 
     let im: Image<Bmp<Rgb565>> = Image::new(&bmp, Point::zero());
 
@@ -65,7 +67,7 @@ fn main() -> ! {
         (h as u32 - bmp.size().height) as i32 / 2,
     ));
 
-    moved.draw(&mut disp).unwrap();
+    moved.draw(&mut disp).unwrap();*/
 
     disp.flush().unwrap();
 
@@ -73,19 +75,6 @@ fn main() -> ! {
 }
 
 #[exception]
-fn HardFault(ef: &ExceptionFrame) -> ! {
+unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     panic!("{:#?}", ef);
-}
-
-/// Size information for the common 96x16 variants
-#[derive(Debug, Copy, Clone)]
-pub struct DisplaySize96x64;
-impl DisplaySize for DisplaySize96x64 {
-    const WIDTH: u8 = 96;
-    const HEIGHT: u8 = 64;
-    type Buffer = [u8; Self::WIDTH as usize * Self::HEIGHT as usize / 8];
-
-    fn configure(&self, iface: &mut impl WriteOnlyDataCommand) -> Result<(), DisplayError> {
-        Command::ComPinConfig(false, false).send(iface)
-    }
 }
